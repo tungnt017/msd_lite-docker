@@ -1,4 +1,4 @@
-FROM debian:unstable AS builder
+FROM debian:stable-slim AS builder
 
 LABEL maintainer="D-Jy <duan@d-jy.net>"
 
