@@ -1,114 +1,49 @@
-name: Docker
+name: Build and Publish Docker Image
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-  schedule:
-    - cron: '29 3 * * *'
-  #push:
-  #  branches: [ "main" ]
-  #pull_request:
-  #  branches: [ "main" ]
 
 env:
   IMAGE_NAME: msd_lite
-  UPSTREAM_OWNER: rozhuk-im
-  UPSTREAM_REPO: msd_lite
-  UPSTREAM_BRANCH: master
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Get upstream SHA
-        id: get_sha
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          result-encoding: string
-          script: |
-            const { data: ref } = await github.rest.git.getRef({
-              owner: process.env.UPSTREAM_OWNER,
-              repo: process.env.UPSTREAM_REPO,
-              ref: `heads/${process.env.UPSTREAM_BRANCH}`
-            });
-            return ref.object.sha;
-
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
 
-      - name: Update SHA
-        id: update_sha
-        run: |
-          if [ -f "sha.txt" ]; then
-            current=$(cat sha.txt)
-          else
-            current=""
-          fi
-          remote=${{ steps.get_sha.outputs.result }}
-          echo "Current SHA: $current"
-          echo "CURRENT_SHA=$current" >> $GITHUB_ENV
-          echo "Remote  SHA: $remote"
-          echo "REMOTE_SHA=$remote" >> $GITHUB_ENV
-          
-          if [[ "$current" == "$remote" && "${{ github.event_name }}" != "workflow_dispatch" ]]; then
-            echo "SKIP=true" >> $GITHUB_ENV
-            echo "No changes detected."
-          else
-            echo "SKIP=false" >> $GITHUB_ENV
-            echo "$remote" > sha.txt
-            git config --global user.name "djylb"
-            git config --global user.email "duan@d-jy.net"
-            git add sha.txt
-            if git diff --cached --quiet; then
-              echo "No changes detected, skipping commit."
-            else
-              git commit -m "Update SHA"
-              git push
-            fi
-          fi
+      - name: Set lowercase owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
-      - name: Set up QEMU
-        if: env.SKIP == 'false'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        if: env.SKIP == 'false'
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        if: env.SKIP == 'false'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry (GHCR)
-        if: env.SKIP == 'false'
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.OWNER_LC }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
       - name: Build and push Docker image
-        if: env.SKIP == 'false'
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
-          platforms: |
-            linux/amd64
-            linux/arm
-            linux/arm64
-            linux/386
-            linux/mips64le
-            linux/ppc64le
-            linux/riscv64
-            linux/s390x
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-            ghcr.io/${{ github.actor }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
